@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <title>LiveScript - Login</title>
+        <meta name="description" content="Login to LiveScript and start coding with friends live.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link rel="stylesheet" href="/static/css/styles.css">
+    </head>
+    <body>
+        <div class="container">
+            <h1>Welcome to LiveScript</h1>
+            <p>Login to collaborate and code live with your friends.</p>
+            {% if error %}
+                <p class="error">{{ error }}</p>
+            {% elif message %}
+                <p class="message">{{ message }}</p>
+            {% endif %}
+            <form action="{% url 'login' %}" method="post">
+                {% csrf_token %}
+                <label for="username">Username:</label>
+                <input type="text" id="username" name="username" required>
+                
+                <label for="password">Password:</label>
+                <input type="password" id="password" name="password" required>
+                
+                <button type="submit">Login</button>
+            </form>
+            <p>Don't have an account? <a href="{% url 'signup' %}">Sign up here</a>.</p>
+        </div>
+    </body>
+</html>
