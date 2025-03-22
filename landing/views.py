@@ -52,6 +52,31 @@ def signup_view(request):
         password = request.POST["password"]
         confirm_password = request.POST["confirm_password"]
 
+        # Check for unique username and email
+        username_exists = User.objects.filter(username=username).exists()
+        email_exists = User.objects.filter(email=email).exists()
+
+        if username_exists and email_exists:
+            return render(
+                request,
+                "landing/signup.html",
+                {
+                    "error": "Username and email are already taken. Please choose another username and email."
+                },
+            )
+        elif username_exists:
+            return render(
+                request,
+                "landing/signup.html",
+                {"error": "Username is already taken. Please choose another one."},
+            )
+        elif email_exists:
+            return render(
+                request,
+                "landing/signup.html",
+                {"error": "Email is already registered. Please use another email."},
+            )
+
         # Password constraints
         if (
             len(password) < 8

@@ -152,38 +152,8 @@
                 margin-bottom: 10px;
                 font-family: monospace;
                 color: #666;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-            }
-            .save-btn {
-                padding: 5px 15px;
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                cursor: pointer;
-                font-size: 14px;
-            }
-            .save-btn:hover {
-                background-color: #45a049;
-            }
-            .save-btn:disabled {
-                background-color: #cccccc;
-                cursor: not-allowed;
             }
         </style>
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.63.0/codemirror.min.css">
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.63.0/addon/lint/lint.min.css">
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.63.0/codemirror.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.63.0/mode/javascript/javascript.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.63.0/mode/python/python.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.63.0/mode/css/css.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.63.0/mode/htmlmixed/htmlmixed.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.63.0/addon/lint/lint.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/jshint/2.13.0/jshint.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.63.0/addon/lint/javascript-lint.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/js-beautify/1.14.0/beautify.min.js"></script>
     </head>
     <body>
         <div class="container">
@@ -219,13 +189,8 @@
                     </form>
                 </div>
                 <div class="file-display">
-                    <div class="file-info">
-                        <span id="file-info">No file selected</span>
-                        <button id="save-btn" class="save-btn" onclick="saveFileContent()" disabled>Save</button>
-                        <button id="check-syntax-btn" class="save-btn" onclick="checkSyntax()">Check Syntax</button>
-                        <button id="format-code-btn" class="save-btn" onclick="formatCode()">Format Code</button>
-                    </div>
-                    <textarea id="file-content" placeholder="No file open"></textarea>
+                    <div class="file-info" id="file-info">No file selected</div>
+                    <textarea id="file-content" placeholder="No file open" readonly></textarea>
                 </div>
             </div>
         </div>
@@ -272,7 +237,6 @@
             let currentFileId = null;
             let currentFileName = "";
             let currentFileElement = null;
-            let editor = null;
 
             // Close dropdown menus when clicking elsewhere
             document.addEventListener('click', function(event) {
@@ -297,19 +261,6 @@
                 dropdown.style.display = dropdown.style.display === "block" ? "none" : "block";
             }
 
-            document.addEventListener("DOMContentLoaded", function () {
-                editor = CodeMirror.fromTextArea(document.getElementById("file-content"), {
-                    mode: "javascript", // Default mode, updated dynamically
-                    lineNumbers: true,
-                    lint: true,
-                    gutters: ["CodeMirror-lint-markers"],
-                });
-
-                editor.on("change", function () {
-                    document.getElementById("save-btn").disabled = false;
-                });
-            });
-
             function loadFileContent(fileId, element) {
                 // Remove active class from previously selected file
                 document.querySelectorAll('.file-item').forEach(item => {
@@ -319,28 +270,15 @@
                 // Add active class to selected file
                 element.classList.add('active');
                 currentFileElement = element;
-                currentFileId = fileId;
                 
                 // Get file information
                 const fileName = element.querySelector('.file-name-text').textContent;
-                let fileType = element.getAttribute('data-file-type');
+                const fileType = element.getAttribute('data-file-type');
                 const fileExtension = element.querySelector('.file-extension').textContent;
                 
                 // Update file info display
                 document.getElementById('file-info').textContent = fileName + fileExtension;
                 
-                // Enable save button
-                document.getElementById('save-btn').disabled = false;
-                
-                // Get the file type and normalize it to match the modeMap keys
-                fileType = fileType.toLowerCase(); // Normalize to lowercase
-                const modeMap = { py: "python", js: "javascript", css: "css", html: "htmlmixed" };
-                const mode = modeMap[fileType] || "javascript"; // Default to JavaScript if file type is unknown
-                editor.setOption("mode", mode);
-
-                // Log the file type and mode being set
-                console.log(`File Type: ${fileType}, Mode Set: ${mode}`);
-
                 // Fetch the file content
                 fetch(`/main/get_file_content/${fileId}/`, {
                     method: "GET",
@@ -349,103 +287,15 @@
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        editor.setValue(data.content);
+                        document.getElementById('file-content').value = data.content;
                     } else {
-                        editor.setValue("Error loading file: " + (data.error || "Unknown error"));
+                        document.getElementById('file-content').value = "Error loading file: " + (data.error || "Unknown error");
                     }
                 })
                 .catch(error => {
                     console.error("Error:", error);
-                    editor.setValue("Error loading file");
+                    document.getElementById('file-content').value = "Error loading file";
                 });
-            }
-
-            function saveFileContent() {
-                if (!currentFileId) {
-                    alert("No file selected");
-                    return;
-                }
-                
-                const content = editor.getValue();
-                const saveBtn = document.getElementById('save-btn');
-                
-                // Disable save button while saving
-                saveBtn.disabled = true;
-                saveBtn.textContent = "Saving...";
-                
-                fetch(`/main/save_content/${currentFileId}/`, {
-                    method: "POST",
-                    body: new URLSearchParams({ content: content }),
-                    headers: { "X-CSRFToken": "{{ csrf_token }}" },
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        saveBtn.textContent = "Saved!";
-                        
-                        // Verify the saved content matches what we expect
-                        if (data.content && data.content !== content) {
-                            console.warn("Warning: Saved content differs from what was sent");
-                            // Consider reloading the content here
-                            reloadFileContent(currentFileId);
-                        }
-                        
-                        setTimeout(() => {
-                            saveBtn.textContent = "Save";
-                            saveBtn.disabled = false;
-                        }, 1500);
-                    } else {
-                        saveBtn.textContent = "Save";
-                        saveBtn.disabled = false;
-                        alert(data.error || "Failed to save file");
-                    }
-                })
-                .catch(error => {
-                    console.error("Error:", error);
-                    saveBtn.textContent = "Save";
-                    saveBtn.disabled = false;
-                    alert("An error occurred while saving the file");
-                });
-            }
-            
-            // Function to reload content directly from the server
-            function reloadFileContent(fileId) {
-                fetch(`/main/get_file_content/${fileId}/`, {
-                    method: "GET",
-                    headers: { "X-CSRFToken": "{{ csrf_token }}" },
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        editor.setValue(data.content);
-                        
-                    }
-                })
-                .catch(error => {
-                    console.error("Error reloading content:", error);
-                });
-            }
-
-            function checkSyntax() {
-                const content = editor.getValue();
-                try {
-                    if (editor.getOption("mode") === "javascript") {
-                        new Function(content); // Basic JS syntax check
-                    }
-                    alert("Syntax is valid!");
-                } catch (e) {
-                    alert("Syntax error: " + e.message);
-                }
-            }
-
-            function formatCode() {
-                const content = editor.getValue();
-                if (editor.getOption("mode") === "javascript") {
-                    const formatted = js_beautify(content);
-                    editor.setValue(formatted);
-                } else {
-                    alert("Formatting is only supported for JavaScript.");
-                }
             }
 
             function openCreateFileModal() {
@@ -581,6 +431,8 @@
                 let confirmInput = document.getElementById("delete-confirm").value;
                 let expectedName = currentFileName;
                 
+                console.log("Input:", confirmInput);
+                console.log("Expected:", expectedName);
                 
                 if (confirmInput !== expectedName) {
                     alert("File name doesn't match. Please enter exactly: " + expectedName);
@@ -600,10 +452,8 @@
                         
                         // If this was the active file, clear the content area
                         if (fileItem && fileItem.classList.contains('active')) {
-                            editor.setValue("");
+                            document.getElementById('file-content').value = "";
                             document.getElementById('file-info').textContent = "No file selected";
-                            document.getElementById('save-btn').disabled = true;
-                            currentFileId = null;
                         }
                         
                         if (fileItem) {
