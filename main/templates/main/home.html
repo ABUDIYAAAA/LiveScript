@@ -155,6 +155,7 @@
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
+                gap: 5px;
             }
             .save-btn {
                 padding: 5px 15px;
@@ -171,6 +172,9 @@
             .save-btn:disabled {
                 background-color: #cccccc;
                 cursor: not-allowed;
+            }
+            .save-btn, .share-btn {
+                margin-right: 0;
             }
         </style>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.63.0/codemirror.min.css">
@@ -193,6 +197,7 @@
                     <button class="add-file-btn" onclick="openCreateFileModal()">+</button>
                 </div>
                 <ul id="file-list">
+                    <h4>Your Files</h4>
                     {% for file in files %}
                         <li class="file-item" data-file-id="{{ file.id }}" data-file-type="{{ file.file_type }}" onclick="loadFileContent('{{ file.id }}', this)">
                             <span class="file-name">
@@ -208,6 +213,17 @@
                     {% empty %}
                         <p>No files found.</p>
                     {% endfor %}
+                    <h4>Collaborative Files</h4>
+                    {% for file in collaborative_files %}
+                        <li class="file-item" data-file-id="{{ file.id }}" data-file-type="{{ file.file_type }}" onclick="loadFileContent('{{ file.id }}', this)">
+                            <span class="file-name">
+                                <span class="file-name-text">{{ file.name }}</span>
+                                <span class="file-extension">.{{ file.file_type }}</span>
+                            </span>
+                        </li>
+                    {% empty %}
+                        <p>No collaborative files found.</p>
+                    {% endfor %}
                 </ul>
             </div>
             <div class="content">
@@ -222,8 +238,8 @@
                     <div class="file-info">
                         <span id="file-info">No file selected</span>
                         <button id="save-btn" class="save-btn" onclick="saveFileContent()" disabled>Save</button>
-                        <button id="check-syntax-btn" class="save-btn" onclick="checkSyntax()">Check Syntax</button>
-                        <button id="format-code-btn" class="save-btn" onclick="formatCode()">Format Code</button>
+                        <button id="share-btn" class="save-btn share-btn" onclick="openShareModal()">Share</button>
+                        <span id="collaborators-count" class="collaborators-count" onclick="showCollaborators()">0</span>
                     </div>
                     <textarea id="file-content" placeholder="No file open"></textarea>
                 </div>
@@ -268,80 +284,163 @@
             </div>
         </div>
 
+        <!-- Share Modal -->
+        <div class="modal-overlay" id="share-modal-overlay" onclick="closeModals()"></div>
+        <div class="modal" id="share-modal">
+            <h3>Share File</h3>
+            <p>Copy the link below to share this file:</p>
+            <input type="text" id="share-link" readonly>
+            <button onclick="copyShareLink()">Copy</button>
+            <div class="modal-buttons">
+                <button onclick="closeModals()">Close</button>
+            </div>
+        </div>
+
+        <!-- Collaborators Modal -->
+        <div class="modal-overlay" id="collaborators-modal-overlay" onclick="closeModals()"></div>
+        <div class="modal" id="collaborators-modal">
+            <h3>Collaborators</h3>
+            <ul id="collaborators-list"></ul>
+            <div class="modal-buttons">
+                <button onclick="closeModals()">Close</button>
+            </div>
+        </div>
+
+        <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
         <script>
+            const socket = io("http://localhost:3000");
             let currentFileId = null;
-            let currentFileName = "";
             let currentFileElement = null;
             let editor = null;
 
-            // Close dropdown menus when clicking elsewhere
-            document.addEventListener('click', function(event) {
-                const dropdowns = document.querySelectorAll('.menu-dropdown');
-                dropdowns.forEach(dropdown => {
-                    if (dropdown.style.display === 'block') {
-                        dropdown.style.display = 'none';
-                    }
-                });
-            });
-
-            function toggleMenu(event) {
-                event.stopPropagation();
-                // Close all other open menus first
-                document.querySelectorAll('.menu-dropdown').forEach(dropdown => {
-                    if (dropdown !== event.target.nextElementSibling) {
-                        dropdown.style.display = 'none';
-                    }
-                });
-                
-                let dropdown = event.target.nextElementSibling;
-                dropdown.style.display = dropdown.style.display === "block" ? "none" : "block";
-            }
-
             document.addEventListener("DOMContentLoaded", function () {
+                let isRemoteUpdate = false;
+                let textChangeTimeout = null;
+                let autoSaveTimeout = null;
+                let isTyping = false;
+
                 editor = CodeMirror.fromTextArea(document.getElementById("file-content"), {
-                    mode: "javascript", // Default mode, updated dynamically
+                    mode: "javascript",
                     lineNumbers: true,
                     lint: true,
                     gutters: ["CodeMirror-lint-markers"],
                 });
 
-                editor.on("change", function () {
+                editor.on("change", function (instance, changeObj) {
+                    if (isRemoteUpdate) {
+                        isRemoteUpdate = false;
+                        return;
+                    }
+
+                    isTyping = true;
                     document.getElementById("save-btn").disabled = false;
+
+                    clearTimeout(textChangeTimeout);
+                    textChangeTimeout = setTimeout(() => {
+                        if (currentFileId) {
+                            const content = instance.getValue();
+                            const cursor = instance.getCursor();
+                            socket.emit("textChange", { fileId: currentFileId, content, cursor });
+                        }
+                    }, 300);
+
+                    clearTimeout(autoSaveTimeout);
+                    autoSaveTimeout = setTimeout(() => {
+                        if (isTyping && currentFileId) {
+                            saveFileContent();
+                            isTyping = false;
+                        }
+                    }, 5000);
+                });
+
+                socket.on("textChange", ({ content, cursor }) => {
+                    if (currentFileId) {
+                        const currentCursor = editor.getCursor();
+                        isRemoteUpdate = true;
+                        editor.setValue(content);
+                        editor.setCursor(cursor);
+                    }
+                });
+
+                document.addEventListener("keydown", function (event) {
+                    if (event.ctrlKey && event.key === "s") {
+                        event.preventDefault();
+                        if (currentFileId) {
+                            saveFileContent();
+                        }
+                    }
+                });
+            });
+
+            function joinFileRoom(fileId, username) {
+                socket.emit("joinFile", { fileId, username });
+            }
+
+            function leaveFileRoom(fileId, username) {
+                socket.emit("leaveFile", { fileId, username });
+            }
+
+            function showCollaborators() {
+                document.getElementById("collaborators-modal").style.display = "block";
+                document.getElementById("collaborators-modal-overlay").style.display = "block";
+            }
+
+            socket.on("updateCollaborators", (collaborators) => {
+                const collaboratorsCount = document.getElementById("collaborators-count");
+                const collaboratorsList = document.getElementById("collaborators-list");
+
+                collaboratorsCount.textContent = collaborators.length;
+
+                collaboratorsList.innerHTML = "";
+                collaborators.forEach((collaborator) => {
+                    const li = document.createElement("li");
+                    li.textContent = collaborator;
+                    collaboratorsList.appendChild(li);
                 });
             });
 
             function loadFileContent(fileId, element) {
-                // Remove active class from previously selected file
-                document.querySelectorAll('.file-item').forEach(item => {
-                    item.classList.remove('active');
-                });
-                
-                // Add active class to selected file
-                element.classList.add('active');
+                if (currentFileId === fileId) {
+                    editor.setValue("");
+                    document.getElementById("file-info").textContent = "No file selected";
+                    document.getElementById("save-btn").disabled = true;
+
+                    element.classList.remove("active");
+
+                    const username = "{{ username }}";
+                    leaveFileRoom(fileId, username);
+
+                    currentFileId = null;
+                    currentFileElement = null;
+                    return;
+                }
+
+                if (currentFileElement) {
+                    currentFileElement.classList.remove("active");
+                }
+
+                element.classList.add("active");
                 currentFileElement = element;
                 currentFileId = fileId;
-                
-                // Get file information
-                const fileName = element.querySelector('.file-name-text').textContent;
-                let fileType = element.getAttribute('data-file-type');
-                const fileExtension = element.querySelector('.file-extension').textContent;
-                
-                // Update file info display
-                document.getElementById('file-info').textContent = fileName + fileExtension;
-                
-                // Enable save button
-                document.getElementById('save-btn').disabled = false;
-                
-                // Get the file type and normalize it to match the modeMap keys
-                fileType = fileType.toLowerCase(); // Normalize to lowercase
-                const modeMap = { py: "python", js: "javascript", css: "css", html: "htmlmixed" };
-                const mode = modeMap[fileType] || "javascript"; // Default to JavaScript if file type is unknown
+
+                const fileName = element.querySelector(".file-name-text").textContent;
+                const fileExtension = element.querySelector(".file-extension").textContent;
+                const fileType = element.getAttribute("data-file-type").toLowerCase().trim();
+
+                document.getElementById("file-info").textContent = fileName + fileExtension;
+
+                document.getElementById("save-btn").disabled = false;
+
+                const modeMap = {
+                    python: "python",
+                    js: "javascript",
+                    css: "css",
+                    html: "htmlmixed",
+                    py: "python",
+                };
+                const mode = modeMap[fileType] || "javascript";
                 editor.setOption("mode", mode);
 
-                // Log the file type and mode being set
-                console.log(`File Type: ${fileType}, Mode Set: ${mode}`);
-
-                // Fetch the file content
                 fetch(`/main/get_file_content/${fileId}/`, {
                     method: "GET",
                     headers: { "X-CSRFToken": "{{ csrf_token }}" },
@@ -358,6 +457,9 @@
                     console.error("Error:", error);
                     editor.setValue("Error loading file");
                 });
+
+                const username = "{{ username }}";
+                joinFileRoom(fileId, username);
             }
 
             function saveFileContent() {
@@ -365,31 +467,27 @@
                     alert("No file selected");
                     return;
                 }
-                
+
+                const currentCursor = editor.getCursor();
+
                 const content = editor.getValue();
+                const formattedContent = js_beautify(content);
+                editor.setValue(formattedContent);
+                editor.setCursor(currentCursor);
+
                 const saveBtn = document.getElementById('save-btn');
-                
-                // Disable save button while saving
                 saveBtn.disabled = true;
                 saveBtn.textContent = "Saving...";
-                
+
                 fetch(`/main/save_content/${currentFileId}/`, {
                     method: "POST",
-                    body: new URLSearchParams({ content: content }),
+                    body: new URLSearchParams({ content: formattedContent }),
                     headers: { "X-CSRFToken": "{{ csrf_token }}" },
                 })
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
                         saveBtn.textContent = "Saved!";
-                        
-                        // Verify the saved content matches what we expect
-                        if (data.content && data.content !== content) {
-                            console.warn("Warning: Saved content differs from what was sent");
-                            // Consider reloading the content here
-                            reloadFileContent(currentFileId);
-                        }
-                        
                         setTimeout(() => {
                             saveBtn.textContent = "Save";
                             saveBtn.disabled = false;
@@ -407,8 +505,11 @@
                     alert("An error occurred while saving the file");
                 });
             }
-            
-            // Function to reload content directly from the server
+
+            function shareFile() {
+                alert("Share functionality is not implemented yet.");
+            }
+
             function reloadFileContent(fileId) {
                 fetch(`/main/get_file_content/${fileId}/`, {
                     method: "GET",
@@ -418,34 +519,11 @@
                 .then(data => {
                     if (data.success) {
                         editor.setValue(data.content);
-                        
                     }
                 })
                 .catch(error => {
                     console.error("Error reloading content:", error);
                 });
-            }
-
-            function checkSyntax() {
-                const content = editor.getValue();
-                try {
-                    if (editor.getOption("mode") === "javascript") {
-                        new Function(content); // Basic JS syntax check
-                    }
-                    alert("Syntax is valid!");
-                } catch (e) {
-                    alert("Syntax error: " + e.message);
-                }
-            }
-
-            function formatCode() {
-                const content = editor.getValue();
-                if (editor.getOption("mode") === "javascript") {
-                    const formatted = js_beautify(content);
-                    editor.setValue(formatted);
-                } else {
-                    alert("Formatting is only supported for JavaScript.");
-                }
             }
 
             function openCreateFileModal() {
@@ -457,38 +535,36 @@
             function createFile() {
                 let fileName = document.getElementById("create-file-input").value;
                 let fileType = document.getElementById("file-type-select").value;
-                
+
                 if (!fileName) {
                     alert("Please enter a file name");
                     return;
                 }
-                
+
                 fetch('/main/create_file/', {
                     method: "POST",
-                    body: new URLSearchParams({ 
+                    body: new URLSearchParams({
                         name: fileName,
-                        file_type: fileType 
+                        file_type: fileType
                     }),
                     headers: { "X-CSRFToken": "{{ csrf_token }}" },
                 })
                 .then(response => response.json())
                 .then(data => {
                     if (data.id) {
-                        // Create new file item in the list
                         const fileList = document.getElementById('file-list');
-                        
-                        // Check if there's a "No files found" message
+
                         const noFiles = fileList.querySelector('p');
                         if (noFiles) {
                             fileList.innerHTML = '';
                         }
-                        
+
                         const li = document.createElement('li');
                         li.className = 'file-item';
                         li.setAttribute('data-file-id', data.id);
                         li.setAttribute('data-file-type', data.file_type);
                         li.setAttribute('onclick', `loadFileContent('${data.id}', this)`);
-                        
+
                         li.innerHTML = `
                             <span class="file-name">
                                 <span class="file-name-text">${data.name}</span>
@@ -500,11 +576,10 @@
                                 <li onclick="openDeleteModal('${data.id}', '${data.name}')">Delete</li>
                             </ul>
                         `;
-                        
+
                         fileList.appendChild(li);
                         closeModals();
-                        
-                        // Automatically select the new file
+
                         loadFileContent(data.id, li);
                     } else {
                         alert(data.error || "Failed to create file");
@@ -526,12 +601,12 @@
 
             function renameFile() {
                 let newName = document.getElementById("rename-input").value;
-                
+
                 if (!newName) {
                     alert("Please enter a new name");
                     return;
                 }
-                
+
                 fetch(`/main/rename_file/${currentFileId}/`, {
                     method: "POST",
                     body: new URLSearchParams({ new_name: newName }),
@@ -540,12 +615,10 @@
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        // Find the file element and update its name
                         const fileItem = document.querySelector(`[data-file-id='${currentFileId}']`);
                         if (fileItem) {
                             fileItem.querySelector('.file-name-text').textContent = newName;
-                            
-                            // Update file info if this file is currently selected
+
                             if (fileItem.classList.contains('active')) {
                                 const fileExtension = fileItem.querySelector('.file-extension').textContent;
                                 document.getElementById('file-info').textContent = newName + fileExtension;
@@ -566,13 +639,11 @@
                 event.stopPropagation();
                 currentFileId = fileId;
                 currentFileName = fileName;
-                
-                // Update the expected filename display
+
                 document.getElementById("expected-filename").textContent = fileName;
-                
-                // Clear the input field
+
                 document.getElementById("delete-confirm").value = "";
-                
+
                 document.getElementById("delete-modal").style.display = "block";
                 document.getElementById("modal-overlay").style.display = "block";
             }
@@ -580,13 +651,12 @@
             function deleteFile() {
                 let confirmInput = document.getElementById("delete-confirm").value;
                 let expectedName = currentFileName;
-                
-                
+
                 if (confirmInput !== expectedName) {
                     alert("File name doesn't match. Please enter exactly: " + expectedName);
                     return;
                 }
-                
+
                 fetch(`/main/delete_file/${currentFileId}/`, {
                     method: "POST",
                     body: new URLSearchParams({ confirm_name: confirmInput }),
@@ -595,27 +665,24 @@
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        // Remove the file element from the list
                         const fileItem = document.querySelector(`[data-file-id='${currentFileId}']`);
-                        
-                        // If this was the active file, clear the content area
+
                         if (fileItem && fileItem.classList.contains('active')) {
                             editor.setValue("");
                             document.getElementById('file-info').textContent = "No file selected";
                             document.getElementById('save-btn').disabled = true;
                             currentFileId = null;
                         }
-                        
+
                         if (fileItem) {
                             fileItem.remove();
                         }
-                        
-                        // Check if there are any files left
+
                         const fileList = document.getElementById('file-list');
                         if (fileList.children.length === 0) {
                             fileList.innerHTML = '<p>No files found.</p>';
                         }
-                        
+
                         closeModals();
                     } else {
                         alert(data.error || "Failed to delete file");
@@ -631,6 +698,40 @@
                 document.querySelectorAll(".modal, .modal-overlay").forEach(el => {
                     el.style.display = "none";
                 });
+            }
+
+            function openShareModal() {
+                if (!currentFileId) {
+                    alert("No file selected to share.");
+                    return;
+                }
+
+                fetch(`/main/share_file/${currentFileId}/`, {
+                    method: "GET",
+                    headers: { "X-CSRFToken": "{{ csrf_token }}" },
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        const shareLink = data.share_link;
+                        document.getElementById("share-link").value = shareLink;
+                        document.getElementById("share-modal").style.display = "block";
+                        document.getElementById("share-modal-overlay").style.display = "block";
+                    } else {
+                        alert(data.error || "Failed to generate share link.");
+                    }
+                })
+                .catch(error => {
+                    console.error("Error:", error);
+                    alert("An error occurred while generating the share link.");
+                });
+            }
+
+            function copyShareLink() {
+                const shareLinkInput = document.getElementById("share-link");
+                shareLinkInput.select();
+                document.execCommand("copy");
+                alert("Link copied to clipboard!");
             }
         </script>
     </body>

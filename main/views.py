@@ -1,10 +1,11 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
-from .models import CodeFile
+from .models import CodeFile, FileShareToken
 from django.contrib.auth import logout
 from django.views.decorators.csrf import csrf_exempt
 from django.core.exceptions import PermissionDenied
+from django.utils.timezone import now, timedelta
 
 
 @login_required
@@ -14,9 +15,16 @@ def home(request):
             request, "main/home.html", {"message": "Please verify your email to start."}
         )
 
-    files = CodeFile.objects.filter(owner=request.user)
+    owned_files = CodeFile.objects.filter(owner=request.user)
+    collaborative_files = CodeFile.objects.filter(collaborators=request.user)
     return render(
-        request, "main/home.html", {"username": request.user.username, "files": files}
+        request,
+        "main/home.html",
+        {
+            "username": request.user.username,
+            "files": owned_files,
+            "collaborative_files": collaborative_files,
+        },
     )
 
 
@@ -54,13 +62,13 @@ def rename_file(request, file_id):
 
 @login_required
 def delete_file(request, file_id):
+    file = get_object_or_404(CodeFile, id=file_id)
+
+    # Ensure only the owner can delete
+    if file.owner != request.user:
+        raise PermissionDenied("You do not have permission to delete this file.")
+
     if request.method == "POST":
-        file = get_object_or_404(CodeFile, id=file_id)
-
-        # Ensure only the owner can delete
-        if file.owner != request.user:
-            raise PermissionDenied("You do not have permission to delete this file.")
-
         confirm_name = request.POST.get("confirm_name")
         if confirm_name == file.name:
             file.delete()
@@ -80,8 +88,8 @@ def logout_view(request):
 def get_file_content(request, file_id):
     file = get_object_or_404(CodeFile, id=file_id)
 
-    # Ensure only the owner can view content
-    if file.owner != request.user:
+    # Ensure the user is either the owner or a collaborator
+    if file.owner != request.user and request.user not in file.collaborators.all():
         return JsonResponse({"error": "Permission denied"}, status=403)
 
     # Force database refresh
@@ -92,16 +100,14 @@ def get_file_content(request, file_id):
 
 @login_required
 def save_content(request, file_id):
-    print("save_content")
+    file = get_object_or_404(CodeFile, id=file_id)
+
+    # Ensure the user is either the owner or a collaborator
+    if file.owner != request.user and request.user not in file.collaborators.all():
+        raise PermissionDenied("You do not have permission to edit this file.")
+
     if request.method == "POST":
-        file = get_object_or_404(CodeFile, id=file_id)
-
-        # Ensure only the owner can save content
-        if file.owner != request.user:
-            raise PermissionDenied("You do not have permission to edit this file.")
-
         new_content = request.POST.get("content")
-        print(new_content)
         if new_content is not None:
             file.content = new_content
             file.save()
@@ -117,3 +123,41 @@ def save_content(request, file_id):
                 }
             )
     return JsonResponse({"error": "Invalid request"}, status=400)
+
+
+@login_required
+def share_file(request, file_id):
+    file = get_object_or_404(CodeFile, id=file_id)
+
+    # Ensure only the owner can generate a share token
+    if file.owner != request.user:
+        raise PermissionDenied("You do not have permission to share this file.")
+
+    # Generate a new share token
+    share_token = FileShareToken.objects.create(file=file)
+
+    # Return the shareable link
+    share_link = (
+        f"{request.scheme}://{request.get_host()}/main/access_file/{share_token.token}/"
+    )
+    return JsonResponse({"success": True, "share_link": share_link})
+
+
+def access_file(request, token):
+    try:
+        # Validate the token
+        share_token = get_object_or_404(FileShareToken, token=token)
+
+        # Add the user as a collaborator if they are authenticated
+        if request.user.is_authenticated:
+            file = share_token.file
+            if (
+                file.owner != request.user
+                and request.user not in file.collaborators.all()
+            ):
+                file.collaborators.add(request.user)
+
+        # Redirect to the home page (or file view if implemented)
+        return redirect("home")
+    except FileShareToken.DoesNotExist:
+        return JsonResponse({"error": "Invalid or expired token."}, status=400)

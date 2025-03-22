@@ -1,1 +1,35 @@
-socketserver\node_modules
+# Node.js dependencies
+node_modules/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+
+# Python-related files
+*.pyc
+__pycache__/
+
+# Django-related files
+db.sqlite3
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+
+# IDE-specific files
+.vscode/
+.idea/
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/

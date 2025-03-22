@@ -17,4 +17,6 @@ urlpatterns = [
         views.save_content,  # Fix the view reference here
         name="save",
     ),
+    path("share_file/<int:file_id>/", views.share_file, name="share_file"),
+    path("access_file/<uuid:token>/", views.access_file, name="access_file"),
 ]

@@ -1,6 +1,7 @@
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.db import models
+import uuid
 
 
 def validate_file_extension(value):
@@ -45,5 +46,19 @@ class CodeFile(models.Model):
         elif self.file_type == "html" and not self.name.endswith(".html"):
             raise ValidationError("HTML files must have a .html extension.")
 
+    def is_collaborator(self, user):
+        return user in self.collaborators.all()
+
     class Meta:
         unique_together = ("name", "owner")
+
+
+class FileShareToken(models.Model):
+    file = models.ForeignKey(
+        CodeFile, related_name="share_tokens", on_delete=models.CASCADE
+    )
+    token = models.UUIDField(default=uuid.uuid4, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"ShareToken for {self.file.name}"
