@@ -176,7 +176,7 @@
             .save-btn, .share-btn {
                 margin-right: 0;
             }
-            
+
             /* Cursor Indicator Styles */
             .remote-cursor {
                 position: absolute;
@@ -229,7 +229,7 @@
                 margin-right: 10px;
                 align-items: center;
             }
-            
+
             #collaborators-modal {
                 min-width: 250px;
             }
@@ -264,9 +264,128 @@
         <script src="https://cdnjs.cloudflare.com/ajax/libs/jshint/2.13.0/jshint.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.63.0/addon/lint/javascript-lint.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/js-beautify/1.14.0/beautify.min.js"></script>
+    </head>
+    <body>
+        <div class="container">
+            <div class="file-list">
+                <div class="file-list-header">
+                    <h3>Files</h3>
+                    <button class="add-file-btn" onclick="openCreateFileModal()">+</button>
+                </div>
+                <ul id="file-list">
+                    <h4>Your Files</h4>
+                    {% for file in files %}
+                        <li class="file-item" data-file-id="{{ file.id }}" data-file-type="{{ file.file_type }}" onclick="loadFileContent('{{ file.id }}', this)">
+                            <span class="file-name">
+                                <span class="file-name-text">{{ file.name }}</span>
+                                <span class="file-extension">.{{ file.file_type }}</span>
+                            </span>
+                            <button class="menu-button" onclick="toggleMenu(event)">⋮</button>
+                            <ul class="menu-dropdown">
+                                <li onclick="openRenameModal('{{ file.id }}', '{{ file.name }}')">Rename</li>
+                                <li onclick="openDeleteModal('{{ file.id }}', '{{ file.name }}')">Delete</li>
+                            </ul>
+                        </li>
+                    {% empty %}
+                        <p>No files found.</p>
+                    {% endfor %}
+                    <h4>Collaborative Files</h4>
+                    {% for file in collaborative_files %}
+                        <li class="file-item" data-file-id="{{ file.id }}" data-file-type="{{ file.file_type }}" onclick="loadFileContent('{{ file.id }}', this)">
+                            <span class="file-name">
+                                <span class="file-name-text">{{ file.name }}</span>
+                                <span class="file-extension">.{{ file.file_type }}</span>
+                            </span>
+                        </li>
+                    {% empty %}
+                        <p>No collaborative files found.</p>
+                    {% endfor %}
+                </ul>
+            </div>
+            <div class="content">
+                <div class="header">
+                    <h1>Welcome, {{ username }}!</h1>
+                    <form action="{% url 'logout' %}" method="post">
+                        {% csrf_token %}
+                        <button type="submit">Logout</button>
+                    </form>
+                </div>
+                <div class="file-display">
+                    <div class="file-info">
+                        <span id="file-info">No file selected</span>
+                        <div class="collaborators-list" id="collaborators-list"></div>
+                        <button id="save-btn" class="save-btn" onclick="saveFileContent()" disabled>Save</button>
+                        <button id="share-btn" class="save-btn share-btn" onclick="openShareModal()">Share</button>
+                        <button id="run-btn" class="save-btn" onclick="runCode()" disabled>Run</button>
+                        <span id="collaborators-count" class="collaborators-count" onclick="showCollaborators()">0</span>
+                    </div>
+                    <textarea id="file-content" placeholder="No file open"></textarea>
+                </div>
+            </div>
+        </div>
+
+        <!-- Create File Modal -->
+        <div class="modal-overlay" id="modal-overlay" onclick="closeModals()"></div>
+        <div class="modal" id="create-file-modal">
+            <h3>Create New File</h3>
+            <input type="text" id="create-file-input" placeholder="File name">
+            <select id="file-type-select" class="file-type-select">
+                <option value="py">Python (.py)</option>
+                <option value="js">JavaScript (.js)</option>
+                <option value="css">CSS (.css)</option>
+                <option value="html">HTML (.html)</option>
+            </select>
+            <div class="modal-buttons">
+                <button onclick="closeModals()">Cancel</button>
+                <button onclick="createFile()">Create</button>
+            </div>
+        </div>
+
+        <!-- Rename Modal -->
+        <div class="modal" id="rename-modal">
+            <h3>Rename File</h3>
+            <input type="text" id="rename-input">
+            <div class="modal-buttons">
+                <button onclick="closeModals()">Cancel</button>
+                <button onclick="renameFile()">Rename</button>
+            </div>
+        </div>
+
+        <!-- Delete Modal -->
+        <div class="modal" id="delete-modal">
+            <h3>Delete File</h3>
+            <p>Type <strong>"<span id="expected-filename"></span>"</strong> to confirm deletion:</p>
+            <input type="text" id="delete-confirm" placeholder="Enter filename here">
+            <div class="modal-buttons">
+                <button onclick="closeModals()">Cancel</button>
+                <button onclick="deleteFile()">Delete</button>
+            </div>
+        </div>
+
+        <!-- Share Modal -->
+        <div class="modal-overlay" id="share-modal-overlay" onclick="closeModals()"></div>
+        <div class="modal" id="share-modal">
+            <h3>Share File</h3>
+            <p>Copy the link below to share this file:</p>
+            <input type="text" id="share-link" readonly>
+            <button onclick="copyShareLink()">Copy</button>
+            <div class="modal-buttons">
+                <button onclick="closeModals()">Close</button>
+            </div>
+        </div>
+
+        <!-- Collaborators Modal -->
+        <div class="modal-overlay" id="collaborators-modal-overlay" onclick="closeModals()"></div>
+        <div class="modal" id="collaborators-modal">
+            <h3>Collaborators</h3>
+            <ul id="collaborators-list"></ul>
+            <div class="modal-buttons">
+                <button onclick="closeModals()">Close</button>
+            </div>
+        </div>
+
         <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
         <script>
-            // Update the Socket.IO URL to match the correct server address
             const socket = io("https://livescript-rza9.onrender.com");
             let currentFileId = null;
             let currentFileElement = null;
@@ -329,10 +448,10 @@
                 editor.on("cursorActivity", function() {
                     if (currentFileId && !isRemoteUpdate) {
                         const cursor = editor.getCursor();
-                        socket.emit("cursorActivity", { 
-                            fileId: currentFileId, 
-                            cursor, 
-                            username: "{{ username }}" 
+                        socket.emit("cursorActivity", {
+                            fileId: currentFileId,
+                            cursor,
+                            username: "{{ username }}"
                         });
                     }
                 });
@@ -340,21 +459,21 @@
                 socket.on("textChange", ({ content, cursor, username }) => {
                     if (currentFileId) {
                         isRemoteUpdate = true;
-                        
+
                         // Save current cursor position
                         const currentCursor = editor.getCursor();
-                        
+
                         // Update text content
                         editor.setValue(content);
-                        
+
                         // Restore local cursor
                         editor.setCursor(currentCursor);
-                        
+
                         // Update remote cursor position
                         if (username) {
                             updateRemoteCursor(username, cursor);
                         }
-                        
+
                         isRemoteUpdate = false;
                     }
                 });
@@ -413,20 +532,20 @@
                         removeRemoteCursor(username);
                     }
                 });
-                
+
                 // Update the full collaborators modal
                 const fullCollaboratorsList = document.getElementById("collaborators-list");
                 if (fullCollaboratorsList) {
                     fullCollaboratorsList.innerHTML = "";
                     collaborators.forEach((collaborator) => {
                         const li = document.createElement("li");
-                        
+
                         // Add color indicator
                         const colorDot = document.createElement('span');
                         colorDot.className = `collaborator-dot ${getUserColor(collaborator)}`;
                         colorDot.style.display = 'inline-block';
                         colorDot.style.marginRight = '5px';
-                        
+
                         li.appendChild(colorDot);
                         li.appendChild(document.createTextNode(collaborator));
                         fullCollaboratorsList.appendChild(li);
@@ -444,40 +563,40 @@
             }
 
             // Function to update a remote cursor
-            
+
 function updateRemoteCursor(username, cursor) {
     // Skip if it's the current user
     if (username === "{{ username }}") return;
-    
+
     // Remove old cursor if it exists
     removeRemoteCursor(username);
-    
+
     // Use CodeMirror's marker API for more reliable positioning
     const cursorPos = {line: cursor.line, ch: cursor.ch};
     const cursorCoords = editor.cursorCoords(cursorPos, "local");
-    
+
     const cursorElement = document.createElement('div');
     cursorElement.className = `remote-cursor ${getUserColor(username)}`;
     // Increase the left position offset to fix the issue
     cursorElement.style.left = `${cursorCoords.left + 45}px`;
     cursorElement.style.top = `${cursorCoords.top}px`;
     cursorElement.style.height = `${editor.defaultTextHeight()}px`;
-    
+
     // Create label showing username
     const labelElement = document.createElement('div');
     labelElement.className = `remote-cursor-label ${getUserColor(username)}`;
     labelElement.textContent = username;
     cursorElement.appendChild(labelElement);
-    
+
     // Add to DOM
     editor.getWrapperElement().appendChild(cursorElement);
-    
+
     // Store the cursor element and position for later updates
     remoteCursors[username] = {
         element: cursorElement,
         position: cursor
     };
-    
+
     // Update collaborators list in header
     updateCollaboratorsList();
 }
@@ -489,7 +608,7 @@ function updateAllRemoteCursors() {
         if (cursorData && cursorData.position) {
             const cursorPos = {line: cursorData.position.line, ch: cursorData.position.ch};
             const cursorCoords = editor.cursorCoords(cursorPos, "local");
-            
+
             cursorData.element.style.left = `${cursorCoords.left}px`;
             cursorData.element.style.top = `${cursorCoords.top}px`;
             cursorData.element.style.height = `${editor.defaultTextHeight()}px`;
@@ -505,12 +624,12 @@ function removeRemoteCursor(username) {
         }
         delete remoteCursors[username];
     }
-    
+
     if (remoteSelections[username]) {
         remoteSelections[username].forEach(marker => marker.clear());
         delete remoteSelections[username];
     }
-    
+
     // Update collaborators list
     updateCollaboratorsList();
 }
@@ -519,17 +638,17 @@ function removeRemoteCursor(username) {
             function updateCollaboratorsList() {
                 const collaboratorsList = document.getElementById("collaborators-list") || createCollaboratorsList();
                 collaboratorsList.innerHTML = '';
-                
+
                 Object.keys(remoteCursors).forEach(username => {
                     const collaboratorInfo = document.createElement('div');
                     collaboratorInfo.className = 'collaborator-info';
-                    
+
                     const colorDot = document.createElement('div');
                     colorDot.className = `collaborator-dot ${getUserColor(username)}`;
-                    
+
                     const nameSpan = document.createElement('span');
                     nameSpan.textContent = username;
-                    
+
                     collaboratorInfo.appendChild(colorDot);
                     collaboratorInfo.appendChild(nameSpan);
                     collaboratorsList.appendChild(collaboratorInfo);
@@ -539,15 +658,15 @@ function removeRemoteCursor(username) {
             // Function to create the collaborators list container if it doesn't exist
             function createCollaboratorsList() {
                 const fileInfo = document.querySelector('.file-info');
-                
+
                 const collaboratorsListContainer = document.createElement('div');
                 collaboratorsListContainer.className = 'collaborators-list';
                 collaboratorsListContainer.id = 'collaborators-list';
-                
+
                 // Insert before the collaborators-count element
                 const collaboratorsCount = document.getElementById('collaborators-count');
                 fileInfo.insertBefore(collaboratorsListContainer, collaboratorsCount);
-                
+
                 return collaboratorsListContainer;
             }
 
