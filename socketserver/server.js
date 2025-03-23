@@ -14,6 +14,7 @@ const io = new Server(server, {
 
 const onlineUsers = {};
 const userFileMap = {};
+const fileCursorPositions = {};
 
 app.get("/", (req, res) => {
   res.sendFile(join(__dirname, "index.html"));
@@ -33,6 +34,16 @@ io.on("connection", (socket) => {
     }
 
     userFileMap[socket.id] = { fileId, username };
+
+    // Initialize cursor position
+    if (!fileCursorPositions[fileId]) {
+      fileCursorPositions[fileId] = {};
+    }
+    fileCursorPositions[fileId][username] = { line: 0, ch: 0 };
+
+    // Emit existing cursor positions to the new user
+    socket.emit("updateCursorPositions", fileCursorPositions[fileId]);
+
     io.to(fileId).emit("updateCollaborators", onlineUsers[fileId]);
   });
 
@@ -48,6 +59,14 @@ io.on("connection", (socket) => {
       }
     }
 
+    // Remove cursor position when user leaves
+    if (fileCursorPositions[fileId] && fileCursorPositions[fileId][username]) {
+      delete fileCursorPositions[fileId][username];
+    }
+
+    // Notify other users to remove the cursor
+    socket.to(fileId).emit("removeCursor", username);
+
     delete userFileMap[socket.id];
     io.to(fileId).emit("updateCollaborators", onlineUsers[fileId]);
   });
@@ -56,8 +75,24 @@ io.on("connection", (socket) => {
     const userData = userFileMap[socket.id];
     if (userData) {
       const { username } = userData;
+
+      // Update cursor position in our server-side storage
+      if (fileCursorPositions[fileId]) {
+        fileCursorPositions[fileId][username] = cursor;
+      }
+
       socket.to(fileId).emit("textChange", { content, cursor, username });
     }
+  });
+
+  socket.on("cursorActivity", ({ fileId, cursor, username }) => {
+    // Update cursor position
+    if (fileCursorPositions[fileId]) {
+      fileCursorPositions[fileId][username] = cursor;
+    }
+
+    // Broadcast cursor position to other users
+    socket.to(fileId).emit("updateCursor", { username, cursor });
   });
 
   socket.on("disconnect", () => {
@@ -75,6 +110,17 @@ io.on("connection", (socket) => {
           delete onlineUsers[fileId];
         }
       }
+
+      // Remove cursor position when user disconnects
+      if (
+        fileCursorPositions[fileId] &&
+        fileCursorPositions[fileId][username]
+      ) {
+        delete fileCursorPositions[fileId][username];
+      }
+
+      // Notify other users to remove the cursor
+      socket.to(fileId).emit("removeCursor", username);
 
       io.to(fileId).emit("updateCollaborators", onlineUsers[fileId]);
       delete userFileMap[socket.id];

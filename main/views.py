@@ -6,6 +6,10 @@ from django.contrib.auth import logout
 from django.views.decorators.csrf import csrf_exempt
 from django.core.exceptions import PermissionDenied
 from django.utils.timezone import now, timedelta
+import subprocess
+import tempfile
+import sys  # Add this import
+import os  # Add this import
 
 
 @login_required
@@ -161,3 +165,44 @@ def access_file(request, token):
         return redirect("home")
     except FileShareToken.DoesNotExist:
         return JsonResponse({"error": "Invalid or expired token."}, status=400)
+
+
+@login_required
+def run_code(request, file_id):
+    file = get_object_or_404(CodeFile, id=file_id)
+
+    # Ensure the user is either the owner or a collaborator
+    if file.owner != request.user and request.user not in file.collaborators.all():
+        raise PermissionDenied("You do not have permission to run this file.")
+    if file.file_type != "py" and file.file_type != "python":
+        return JsonResponse({"error": "Only Python files can be executed."}, status=400)
+
+    if request.method == "POST":
+        try:
+            # Write the code to a temporary file
+            with tempfile.NamedTemporaryFile(suffix=".py", delete=False) as temp_file:
+                temp_file.write(file.content.encode("utf-8"))
+                temp_file_path = temp_file.name
+
+            # Execute the Python file using the current Python interpreter
+            result = subprocess.run(
+                [sys.executable, temp_file_path],  # Use sys.executable
+                capture_output=True,
+                text=True,
+                timeout=5,  # Limit execution time to 5 seconds
+            )
+
+            # Clean up the temporary file
+            os.remove(temp_file_path)  # Use os.remove for cross-platform compatibility
+
+            # Return the output or error
+            if result.returncode == 0:
+                return JsonResponse({"success": True, "output": result.stdout})
+            else:
+                return JsonResponse({"success": False, "error": result.stderr})
+        except subprocess.TimeoutExpired:
+            return JsonResponse({"error": "Code execution timed out."}, status=400)
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=500)
+
+    return JsonResponse({"error": "Invalid request"}, status=400)

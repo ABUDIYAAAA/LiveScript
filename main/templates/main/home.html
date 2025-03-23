@@ -176,6 +176,82 @@
             .save-btn, .share-btn {
                 margin-right: 0;
             }
+            
+            /* Cursor Indicator Styles */
+            .remote-cursor {
+                position: absolute;
+                border-left: 2px solid;
+                height: 1.2em;
+                opacity: 0.7;
+            }
+
+            .remote-cursor-label {
+                position: absolute;
+                top: -1.4em;
+                left: 0;
+                font-size: 10px;
+                font-weight: bold;
+                padding: 1px 3px;
+                border-radius: 2px;
+                white-space: nowrap;
+                color: white;
+            }
+
+            .remote-selection {
+                position: absolute;
+                opacity: 0.2;
+            }
+
+            .user-color-0 { background-color: #F44336; border-color: #F44336; }
+            .user-color-1 { background-color: #2196F3; border-color: #2196F3; }
+            .user-color-2 { background-color: #4CAF50; border-color: #4CAF50; }
+            .user-color-3 { background-color: #FF9800; border-color: #FF9800; }
+            .user-color-4 { background-color: #9C27B0; border-color: #9C27B0; }
+            .user-color-5 { background-color: #00BCD4; border-color: #00BCD4; }
+            .user-color-6 { background-color: #FFEB3B; border-color: #FFEB3B; }
+            .user-color-7 { background-color: #795548; border-color: #795548; }
+
+            .collaborator-info {
+                display: flex;
+                align-items: center;
+                margin-right: 10px;
+            }
+
+            .collaborator-dot {
+                width: 10px;
+                height: 10px;
+                border-radius: 50%;
+                margin-right: 5px;
+            }
+
+            .collaborators-list {
+                display: flex;
+                margin-right: 10px;
+                align-items: center;
+            }
+            
+            #collaborators-modal {
+                min-width: 250px;
+            }
+
+            #collaborators-list li {
+                padding: 8px 10px;
+                display: flex;
+                align-items: center;
+                border-bottom: 1px solid #eee;
+            }
+
+            #collaborators-list li:last-child {
+                border-bottom: none;
+            }
+
+            .collaborator-dot {
+                width: 10px;
+                height: 10px;
+                border-radius: 50%;
+                display: inline-block;
+                margin-right: 8px;
+            }
         </style>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.63.0/codemirror.min.css">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.63.0/addon/lint/lint.min.css">
@@ -237,8 +313,10 @@
                 <div class="file-display">
                     <div class="file-info">
                         <span id="file-info">No file selected</span>
+                        <div class="collaborators-list" id="collaborators-list"></div>
                         <button id="save-btn" class="save-btn" onclick="saveFileContent()" disabled>Save</button>
                         <button id="share-btn" class="save-btn share-btn" onclick="openShareModal()">Share</button>
+                        <button id="run-btn" class="save-btn" onclick="runCode()" disabled>Run</button>
                         <span id="collaborators-count" class="collaborators-count" onclick="showCollaborators()">0</span>
                     </div>
                     <textarea id="file-content" placeholder="No file open"></textarea>
@@ -312,6 +390,10 @@
             let currentFileId = null;
             let currentFileElement = null;
             let editor = null;
+            const remoteCursors = {};
+            const remoteSelections = {};
+            const userColors = {};
+            let nextColorIndex = 0;
 
             document.addEventListener("DOMContentLoaded", function () {
                 let isRemoteUpdate = false;
@@ -324,6 +406,15 @@
                     lineNumbers: true,
                     lint: true,
                     gutters: ["CodeMirror-lint-markers"],
+                });
+                editor.on("scroll", updateAllRemoteCursors);
+                editor.on("update", updateAllRemoteCursors);
+                editor.on("viewportChange", updateAllRemoteCursors);
+
+                // Also call updateAllRemoteCursors after setting content
+                editor.on("change", function() {
+                    // Wait a bit for the editor to update layout
+                    setTimeout(updateAllRemoteCursors, 50);
                 });
 
                 editor.on("change", function (instance, changeObj) {
@@ -353,13 +444,57 @@
                     }, 5000);
                 });
 
-                socket.on("textChange", ({ content, cursor }) => {
-                    if (currentFileId) {
-                        const currentCursor = editor.getCursor();
-                        isRemoteUpdate = true;
-                        editor.setValue(content);
-                        editor.setCursor(cursor);
+                // Add cursor activity event to track local cursor movements
+                editor.on("cursorActivity", function() {
+                    if (currentFileId && !isRemoteUpdate) {
+                        const cursor = editor.getCursor();
+                        socket.emit("cursorActivity", { 
+                            fileId: currentFileId, 
+                            cursor, 
+                            username: "{{ username }}" 
+                        });
                     }
+                });
+
+                socket.on("textChange", ({ content, cursor, username }) => {
+                    if (currentFileId) {
+                        isRemoteUpdate = true;
+                        
+                        // Save current cursor position
+                        const currentCursor = editor.getCursor();
+                        
+                        // Update text content
+                        editor.setValue(content);
+                        
+                        // Restore local cursor
+                        editor.setCursor(currentCursor);
+                        
+                        // Update remote cursor position
+                        if (username) {
+                            updateRemoteCursor(username, cursor);
+                        }
+                        
+                        isRemoteUpdate = false;
+                    }
+                });
+
+                // Socket event to update cursor positions when users join
+                socket.on("updateCursorPositions", (positions) => {
+                    Object.keys(positions).forEach(username => {
+                        if (username !== "{{ username }}") {
+                            updateRemoteCursor(username, positions[username]);
+                        }
+                    });
+                });
+
+                // Socket event to update a specific user's cursor
+                socket.on("updateCursor", ({ username, cursor }) => {
+                    updateRemoteCursor(username, cursor);
+                });
+
+                // Socket event to remove cursor when a user leaves
+                socket.on("removeCursor", (username) => {
+                    removeRemoteCursor(username);
                 });
 
                 document.addEventListener("keydown", function (event) {
@@ -391,15 +526,156 @@
 
                 collaboratorsCount.textContent = collaborators.length;
 
-                collaboratorsList.innerHTML = "";
-                collaborators.forEach((collaborator) => {
-                    const li = document.createElement("li");
-                    li.textContent = collaborator;
-                    collaboratorsList.appendChild(li);
+                // Clear remote cursors for users who are no longer collaborating
+                Object.keys(remoteCursors).forEach(username => {
+                    if (!collaborators.includes(username)) {
+                        removeRemoteCursor(username);
+                    }
                 });
+                
+                // Update the full collaborators modal
+                const fullCollaboratorsList = document.getElementById("collaborators-list");
+                if (fullCollaboratorsList) {
+                    fullCollaboratorsList.innerHTML = "";
+                    collaborators.forEach((collaborator) => {
+                        const li = document.createElement("li");
+                        
+                        // Add color indicator
+                        const colorDot = document.createElement('span');
+                        colorDot.className = `collaborator-dot ${getUserColor(collaborator)}`;
+                        colorDot.style.display = 'inline-block';
+                        colorDot.style.marginRight = '5px';
+                        
+                        li.appendChild(colorDot);
+                        li.appendChild(document.createTextNode(collaborator));
+                        fullCollaboratorsList.appendChild(li);
+                    });
+                }
             });
 
+            // Function to get a consistent color for each user
+            function getUserColor(username) {
+                if (!userColors[username]) {
+                    userColors[username] = nextColorIndex % 8;
+                    nextColorIndex++;
+                }
+                return `user-color-${userColors[username]}`;
+            }
+
+            // Function to update a remote cursor
+            
+function updateRemoteCursor(username, cursor) {
+    // Skip if it's the current user
+    if (username === "{{ username }}") return;
+    
+    // Remove old cursor if it exists
+    removeRemoteCursor(username);
+    
+    // Use CodeMirror's marker API for more reliable positioning
+    const cursorPos = {line: cursor.line, ch: cursor.ch};
+    const cursorCoords = editor.cursorCoords(cursorPos, "local");
+    
+    const cursorElement = document.createElement('div');
+    cursorElement.className = `remote-cursor ${getUserColor(username)}`;
+    // Increase the left position offset to fix the issue
+    cursorElement.style.left = `${cursorCoords.left + 45}px`;
+    cursorElement.style.top = `${cursorCoords.top}px`;
+    cursorElement.style.height = `${editor.defaultTextHeight()}px`;
+    
+    // Create label showing username
+    const labelElement = document.createElement('div');
+    labelElement.className = `remote-cursor-label ${getUserColor(username)}`;
+    labelElement.textContent = username;
+    cursorElement.appendChild(labelElement);
+    
+    // Add to DOM
+    editor.getWrapperElement().appendChild(cursorElement);
+    
+    // Store the cursor element and position for later updates
+    remoteCursors[username] = {
+        element: cursorElement,
+        position: cursor
+    };
+    
+    // Update collaborators list in header
+    updateCollaboratorsList();
+}
+
+// Add a function to update all remote cursor positions
+function updateAllRemoteCursors() {
+    Object.keys(remoteCursors).forEach(username => {
+        const cursorData = remoteCursors[username];
+        if (cursorData && cursorData.position) {
+            const cursorPos = {line: cursorData.position.line, ch: cursorData.position.ch};
+            const cursorCoords = editor.cursorCoords(cursorPos, "local");
+            
+            cursorData.element.style.left = `${cursorCoords.left}px`;
+            cursorData.element.style.top = `${cursorCoords.top}px`;
+            cursorData.element.style.height = `${editor.defaultTextHeight()}px`;
+        }
+    });
+}
+
+// Update removeRemoteCursor function
+function removeRemoteCursor(username) {
+    if (remoteCursors[username]) {
+        if (remoteCursors[username].element) {
+            remoteCursors[username].element.remove();
+        }
+        delete remoteCursors[username];
+    }
+    
+    if (remoteSelections[username]) {
+        remoteSelections[username].forEach(marker => marker.clear());
+        delete remoteSelections[username];
+    }
+    
+    // Update collaborators list
+    updateCollaboratorsList();
+}
+
+            // Function to update the collaborators list in the header
+            function updateCollaboratorsList() {
+                const collaboratorsList = document.getElementById("collaborators-list") || createCollaboratorsList();
+                collaboratorsList.innerHTML = '';
+                
+                Object.keys(remoteCursors).forEach(username => {
+                    const collaboratorInfo = document.createElement('div');
+                    collaboratorInfo.className = 'collaborator-info';
+                    
+                    const colorDot = document.createElement('div');
+                    colorDot.className = `collaborator-dot ${getUserColor(username)}`;
+                    
+                    const nameSpan = document.createElement('span');
+                    nameSpan.textContent = username;
+                    
+                    collaboratorInfo.appendChild(colorDot);
+                    collaboratorInfo.appendChild(nameSpan);
+                    collaboratorsList.appendChild(collaboratorInfo);
+                });
+            }
+
+            // Function to create the collaborators list container if it doesn't exist
+            function createCollaboratorsList() {
+                const fileInfo = document.querySelector('.file-info');
+                
+                const collaboratorsListContainer = document.createElement('div');
+                collaboratorsListContainer.className = 'collaborators-list';
+                collaboratorsListContainer.id = 'collaborators-list';
+                
+                // Insert before the collaborators-count element
+                const collaboratorsCount = document.getElementById('collaborators-count');
+                fileInfo.insertBefore(collaboratorsListContainer, collaboratorsCount);
+                
+                return collaboratorsListContainer;
+            }
+
             function loadFileContent(fileId, element) {
+                // Clear all remote cursors when switching files
+                Object.keys(remoteCursors).forEach(username => {
+                    removeRemoteCursor(username);
+                });
+
                 if (currentFileId === fileId) {
                     editor.setValue("");
                     document.getElementById("file-info").textContent = "No file selected";
@@ -430,6 +706,14 @@
                 document.getElementById("file-info").textContent = fileName + fileExtension;
 
                 document.getElementById("save-btn").disabled = false;
+
+                // Enable or disable the Run button based on file type
+                const runBtn = document.getElementById("run-btn");
+                if (fileType === "py" || fileType === "python") {
+                    runBtn.disabled = false;
+                } else {
+                    runBtn.disabled = true;
+                }
 
                 const modeMap = {
                     python: "python",
@@ -590,7 +874,6 @@
                     alert("An error occurred while creating the file");
                 });
             }
-
             function openRenameModal(fileId, fileName) {
                 event.stopPropagation();
                 currentFileId = fileId;
@@ -732,6 +1015,30 @@
                 shareLinkInput.select();
                 document.execCommand("copy");
                 alert("Link copied to clipboard!");
+            }
+
+            function runCode() {
+                if (!currentFileId) {
+                    alert("No file selected to run.");
+                    return;
+                }
+
+                fetch(`/main/run_code/${currentFileId}/`, {
+                    method: "POST",
+                    headers: { "X-CSRFToken": "{{ csrf_token }}" },
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert("Output:\n" + data.output);
+                    } else {
+                        alert("Error:\n" + (data.error || "Unknown error"));
+                    }
+                })
+                .catch(error => {
+                    console.error("Error:", error);
+                    alert("An error occurred while running the code.");
+                });
             }
         </script>
     </body>

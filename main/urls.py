@@ -19,4 +19,5 @@ urlpatterns = [
     ),
     path("share_file/<int:file_id>/", views.share_file, name="share_file"),
     path("access_file/<uuid:token>/", views.access_file, name="access_file"),
+    path("run_code/<int:file_id>/", views.run_code, name="run_code"),
 ]
