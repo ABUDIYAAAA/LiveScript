@@ -184,25 +184,30 @@ def run_code(request, file_id):
                 temp_file.write(file.content.encode("utf-8"))
                 temp_file_path = temp_file.name
 
+            # Log the temporary file path
+            print(f"Temporary file created at: {temp_file_path}")
+
             # Execute the Python file using the current Python interpreter
             result = subprocess.run(
-                [sys.executable, temp_file_path],  # Use sys.executable
+                [sys.executable, temp_file_path],
                 capture_output=True,
                 text=True,
                 timeout=5,  # Limit execution time to 5 seconds
             )
 
             # Clean up the temporary file
-            os.remove(temp_file_path)  # Use os.remove for cross-platform compatibility
+            os.remove(temp_file_path)
 
             # Return the output or error
             if result.returncode == 0:
                 return JsonResponse({"success": True, "output": result.stdout})
             else:
+                print(f"Error during execution: {result.stderr}")
                 return JsonResponse({"success": False, "error": result.stderr})
         except subprocess.TimeoutExpired:
             return JsonResponse({"error": "Code execution timed out."}, status=400)
         except Exception as e:
+            print(f"Unexpected error: {str(e)}")
             return JsonResponse({"error": str(e)}, status=500)
 
     return JsonResponse({"error": "Invalid request"}, status=400)

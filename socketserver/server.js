@@ -7,7 +7,7 @@ const app = express();
 const server = createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "livescript.pythonanywhere.com",
+    origin: "https://livescript-rza9.onrender.com",
     methods: ["GET", "POST"],
   },
 });
