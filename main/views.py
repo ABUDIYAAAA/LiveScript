@@ -10,6 +10,8 @@ import subprocess
 import tempfile
 import sys  # Add this import
 import os  # Add this import
+import io  # Add this import
+import contextlib  # Add this import
 
 
 @login_required
@@ -179,35 +181,27 @@ def run_code(request, file_id):
 
     if request.method == "POST":
         try:
-            # Write the code to a temporary file
-            with tempfile.NamedTemporaryFile(suffix=".py", delete=False) as temp_file:
-                temp_file.write(file.content.encode("utf-8"))
-                temp_file_path = temp_file.name
+            # Prepare a safe execution environment
+            exec_globals = {}
+            exec_locals = {}
 
-            # Log the temporary file path
-            print(f"Temporary file created at: {temp_file_path}")
+            # Capture the output using StringIO
+            output_buffer = io.StringIO()
+            with contextlib.redirect_stdout(output_buffer), contextlib.redirect_stderr(
+                output_buffer
+            ):
+                exec(file.content, exec_globals, exec_locals)
 
-            # Execute the Python file using the current Python interpreter
-            result = subprocess.run(
-                [sys.executable, temp_file_path],
-                capture_output=True,
-                text=True,
-                timeout=5,  # Limit execution time to 5 seconds
+            # Get the captured output
+            output = output_buffer.getvalue().strip()
+            output_buffer.close()
+
+            # Return the output
+            return JsonResponse(
+                {"success": True, "output": output or "Code executed successfully."}
             )
-
-            # Clean up the temporary file
-            os.remove(temp_file_path)
-
-            # Return the output or error
-            if result.returncode == 0:
-                return JsonResponse({"success": True, "output": result.stdout})
-            else:
-                print(f"Error during execution: {result.stderr}")
-                return JsonResponse({"success": False, "error": result.stderr})
-        except subprocess.TimeoutExpired:
-            return JsonResponse({"error": "Code execution timed out."}, status=400)
         except Exception as e:
-            print(f"Unexpected error: {str(e)}")
+            print(f"Error during execution: {str(e)}")
             return JsonResponse({"error": str(e)}, status=500)
 
     return JsonResponse({"error": "Invalid request"}, status=400)
