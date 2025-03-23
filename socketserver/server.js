@@ -16,9 +16,10 @@ const onlineUsers = {};
 const userFileMap = {};
 const fileCursorPositions = {};
 
-app.get("/", (req, res) => {
-  res.sendFile(join(__dirname, "index.html"));
-});
+// Remove serving of index.html
+// app.get("/", (req, res) => {
+//   res.sendFile(join(__dirname, "index.html"));
+// });
 
 io.on("connection", (socket) => {
   console.log("A user connected");
@@ -129,5 +130,8 @@ io.on("connection", (socket) => {
 });
 
 server.listen(3000, () => {
-  console.log("Server running at http://localhost:3000");
+  const host =
+    server.address().address === "::" ? "localhost" : server.address().address;
+  const port = server.address().port;
+  console.log(`Server running at http://${host}:${port}`);
 });
